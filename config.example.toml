@@ -1,0 +1,17 @@
+# steam-input-hotkeys config: ~/.config/steam-input-hotkeys/config.toml
+#
+# Each entry maps a key to a shell command. Key names are X keysym names
+# (F14, Page_Down, Pause, Scroll_Lock, ...); run `steam-input-hotkeys --listen`
+# and press the Steam Input binding to see the exact name.
+# Optional modifiers: ctrl, shift, alt, super (e.g. "ctrl+F14").
+# A table form sets a per-key cooldown in seconds (default 0.3).
+#
+# Reload after editing: systemctl --user reload steam-input-hotkeys
+
+[keys]
+# F14 = "playerctl play-pause"
+# F15 = "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"
+# "ctrl+F16" = "notify-send 'Hello from my controller'"
+
+# Save a GPU Screen Recorder replay clip (gpu-screen-recorder running with -r):
+# F13 = { command = "pkill -SIGUSR1 -x gpu-screen-reco", cooldown = 1 }

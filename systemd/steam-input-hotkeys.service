@@ -1,0 +1,13 @@
+[Unit]
+Description=Run commands from Steam Input key bindings (XWayland raw key events)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/steam-input-hotkeys
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,164 @@
+#!/usr/bin/python3 -I
+"""Run commands when Steam Input (or anything else using XTest) presses a key.
+
+On a Wayland desktop, Steam Input sends keyboard bindings through XTest into XWayland.
+The compositor never sees them, so its shortcuts do not fire. XInput2 raw key events on
+the XWayland root window are delivered whatever window has focus, so this daemon listens
+there and runs the command bound to each key.
+
+Usage:
+  steam-input-hotkeys [--config PATH]   run the daemon
+  steam-input-hotkeys --listen          print the name of every key that arrives
+"""
+import argparse
+import os
+import signal
+import subprocess
+import sys
+import time
+import tomllib
+from pathlib import Path
+
+from Xlib import X, XK, display, error
+from Xlib.ext import xinput
+
+DEFAULT_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "steam-input-hotkeys" / "config.toml"
+DEFAULT_COOLDOWN = 0.3
+
+MODIFIERS = {
+    "ctrl": ("Control_L", "Control_R"),
+    "shift": ("Shift_L", "Shift_R"),
+    "alt": ("Alt_L", "Alt_R"),
+    "super": ("Super_L", "Super_R"),
+}
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def keysym_of(name):
+    ks = XK.string_to_keysym(name)
+    if not ks:
+        raise ValueError(f"unknown key {name!r} (use X keysym names like F14, Page_Down, Pause)")
+    return ks
+
+
+def keysym_name(ks):
+    for attr in dir(XK):
+        if attr.startswith("XK_") and getattr(XK, attr) == ks:
+            return attr[3:]
+    return hex(ks)
+
+
+class Binding:
+    def __init__(self, trigger, value):
+        parts = [p.strip() for p in trigger.split("+")]
+        self.trigger = trigger
+        self.key = keysym_of(parts[-1])
+        self.mods = []
+        for m in parts[:-1]:
+            if m.lower() not in MODIFIERS:
+                raise ValueError(f"{trigger!r}: unknown modifier {m!r} (use {', '.join(MODIFIERS)})")
+            self.mods.append({keysym_of(n) for n in MODIFIERS[m.lower()]})
+        if isinstance(value, str):
+            value = {"command": value}
+        if not isinstance(value, dict) or not isinstance(value.get("command"), str):
+            raise ValueError(f"{trigger!r}: expected a command string or a table with `command`")
+        self.command = value["command"]
+        self.cooldown = float(value.get("cooldown", DEFAULT_COOLDOWN))
+        self.last = 0.0
+
+    def matches(self, key, held):
+        return key == self.key and all(m & held for m in self.mods)
+
+    def fire(self):
+        now = time.monotonic()
+        if now - self.last < self.cooldown:
+            return
+        self.last = now
+        log(f"{self.trigger}: {self.command}")
+        subprocess.Popen(["/bin/sh", "-c", self.command], start_new_session=True,
+                         stdin=subprocess.DEVNULL)
+
+
+def load_config(path):
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+    keys = data.get("keys", {})
+    if not isinstance(keys, dict):
+        raise ValueError("`keys` must be a table")
+    return [Binding(trigger, value) for trigger, value in keys.items()]
+
+
+def raw_keycode(ev):
+    # python-xlib leaves XI2 raw events unparsed: deviceid(2) time(4) detail(4) ...
+    return int.from_bytes(ev.data[6:10], "little")
+
+
+def run(state, listen):
+    d = display.Display()
+    d.screen().root.xinput_select_events(
+        [(xinput.AllMasterDevices, xinput.RawKeyPressMask | xinput.RawKeyReleaseMask)])
+    d.flush()
+    log(f"listening on X display {d.get_display_name()}")
+    held = set()
+    while True:
+        ev = d.next_event()
+        if ev.type == X.MappingNotify:
+            d.refresh_keyboard_mapping(ev)
+            continue
+        evtype = getattr(ev, "evtype", None)
+        if evtype not in (xinput.RawKeyPress, xinput.RawKeyRelease):
+            continue
+        ks = d.keycode_to_keysym(raw_keycode(ev), 0)
+        if evtype == xinput.RawKeyRelease:
+            held.discard(ks)
+            continue
+        if ks in held:  # autorepeat
+            continue
+        held.add(ks)
+        if listen:
+            log(keysym_name(ks))
+            continue
+        for b in state["bindings"]:
+            if b.matches(ks, held):
+                b.fire()
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    ap.add_argument("--listen", action="store_true", help="print key names instead of running commands")
+    args = ap.parse_args()
+
+    state = {"bindings": []}
+    if not args.listen:
+        try:
+            state["bindings"] = load_config(args.config)
+        except (OSError, ValueError, tomllib.TOMLDecodeError) as e:
+            sys.exit(f"steam-input-hotkeys: {args.config}: {e}")
+        log(f"{len(state['bindings'])} binding(s) from {args.config}")
+
+        def reload(*_):
+            try:
+                state["bindings"] = load_config(args.config)
+                log(f"reloaded {len(state['bindings'])} binding(s)")
+            except (OSError, ValueError, tomllib.TOMLDecodeError) as e:
+                log(f"reload failed, keeping old bindings: {e}")
+
+        signal.signal(signal.SIGHUP, reload)
+    # Commands run detached; let the kernel reap them.
+    signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+
+    # XWayland can start late or restart; reconnect instead of dying.
+    while True:
+        try:
+            run(state, args.listen)
+        except (error.DisplayError, error.ConnectionClosedError, OSError) as e:
+            log(f"lost X display: {e}; retrying in 5s")
+            time.sleep(5)
+
+
+if __name__ == "__main__":
+    main()
