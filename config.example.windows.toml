@@ -1,0 +1,10 @@
+# steam-input-hotkeys config: %APPDATA%\steam-input-hotkeys\config.toml
+#
+# Each entry maps a key to a command (run through cmd.exe). Run
+# `python steam-input-hotkeys-win.py --listen` and press the Steam Input binding
+# to see the key name. Optional modifiers: ctrl, shift, alt, super ("ctrl+F14").
+# A table form sets a per-key cooldown in seconds (default 0.3).
+
+[keys]
+# F13 = { command = "start \"\" \"C:\Program Files\Some\clip.exe\"", cooldown = 1 }
+# F14 = "powershell -c \"(New-Object -ComObject WScript.Shell).SendKeys('x')\""

@@ -61,6 +61,22 @@ Then in Steam Input, bind a button or a radial menu entry to that key (*Keyboard
 
 To see what name a binding sends, run `steam-input-hotkeys --listen` and press it.
 
+## Windows
+
+Same idea, different cause: Steam Input injects keys with `SendInput`, and games only see them
+for their own window. A global low-level keyboard hook (`WH_KEYBOARD_LL`) still sees them while
+the game has focus, so `steam-input-hotkeys-win.py` listens there and runs your commands.
+
+```
+python steam-input-hotkeys-win.py --listen     # press the Steam Input binding, see its name
+python steam-input-hotkeys-win.py              # run the daemon
+```
+
+Needs Python 3.11+, no packages. Config is `%APPDATA%\steam-input-hotkeys\config.toml`, same format
+as above (see `config.example.windows.toml`); commands run through `cmd.exe`. Restart to reload.
+Key names are the same style as Linux (`F14`, `Page_Down`, `Volume_Up`, `Media_Play_Pause`, ...).
+Run it as administrator if the game runs elevated, or Windows hides the keys from the hook.
+
 ## Choosing keys
 
 Steam's key press also reaches whatever X11 window has focus, which includes Proton games. Use
