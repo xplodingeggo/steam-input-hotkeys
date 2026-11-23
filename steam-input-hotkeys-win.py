@@ -56,6 +56,38 @@ class KBDLLHOOKSTRUCT(ctypes.Structure):
                 ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
 
 
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD), ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+
+class MOUSEINPUT(ctypes.Structure):  # only here so INPUT's union has the real size
+    _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG), ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+
+class INPUT(ctypes.Structure):
+    class _U(ctypes.Union):
+        _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT)]
+    _anonymous_ = ("u",)
+    _fields_ = [("type", wintypes.DWORD), ("u", _U)]
+
+
+user32.SendInput.argtypes = (wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int)
+LLKHF_INJECTED = 0x10
+KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP = 0x1, 0x2
+EXTENDED_VKS = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E}
+# Tags our own key events so the hook ignores them instead of looping.
+OWN_EVENT = 0x5348574B
+
+
+def send_key(vk, up):
+    flags = (KEYEVENTF_EXTENDEDKEY if vk in EXTENDED_VKS else 0) | (KEYEVENTF_KEYUP if up else 0)
+    scan = user32.MapVirtualKeyW(vk, 0)
+    inp = INPUT(type=1, ki=KEYBDINPUT(vk, scan, flags, 0, OWN_EVENT))
+    user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+
+
 def log(msg):
     print(msg, flush=True)
 
@@ -74,9 +106,11 @@ class Binding:
             self.mods.append(MODIFIERS[m.lower()])
         if isinstance(value, str):
             value = {"command": value}
-        if not isinstance(value, dict) or not isinstance(value.get("command"), str):
-            raise ValueError(f"{trigger!r}: expected a command string or a table with `command`")
-        self.command = value["command"]
+        if not isinstance(value, dict) or not (isinstance(value.get("command"), str) or "hold" in value):
+            raise ValueError(f"{trigger!r}: expected a command string or a table with `command` or `hold`")
+        self.command = value.get("command")
+        # ms to hold the key down again after a Steam Input tap, for apps that poll and miss 1 ms taps
+        self.hold = int(value["hold"]) / 1000 if "hold" in value else None
         self.cooldown = float(value.get("cooldown", DEFAULT_COOLDOWN))
         self.last = 0.0
 
@@ -88,9 +122,15 @@ class Binding:
         if now - self.last < self.cooldown:
             return
         self.last = now
-        log(f"{self.trigger}: {self.command}")
-        # CREATE_NO_WINDOW: no console flash over the game
-        subprocess.Popen(self.command, shell=True, stdin=subprocess.DEVNULL, creationflags=0x08000000)
+        if self.hold:
+            log(f"{self.trigger}: hold {int(self.hold * 1000)} ms")
+            send_key(self.vk, up=False)
+            time.sleep(self.hold)
+            send_key(self.vk, up=True)
+        if self.command:
+            log(f"{self.trigger}: {self.command}")
+            # CREATE_NO_WINDOW: no console flash over the game
+            subprocess.Popen(self.command, shell=True, stdin=subprocess.DEVNULL, creationflags=0x08000000)
 
 
 def load_config(path):
@@ -119,7 +159,10 @@ def main():
 
     def proc(code, wparam, lparam):
         if code >= 0:
-            vk = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents.vkCode
+            key = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+            vk = key.vkCode
+            if key.dwExtraInfo == OWN_EVENT:
+                return user32.CallNextHookEx(None, code, wparam, lparam)
             if wparam in (WM_KEYDOWN, WM_SYSKEYDOWN):
                 if vk not in down:
                     down.add(vk)
@@ -127,7 +170,8 @@ def main():
                         log(NAMES.get(vk, hex(vk)))
                     else:
                         for b in bindings:
-                            if b.matches(vk):
+                            # `hold` only answers injected keys (Steam Input), never the real keyboard
+                            if b.matches(vk) and (not b.hold or key.flags & LLKHF_INJECTED):
                                 # off the hook thread: Windows drops hooks that stall
                                 threading.Thread(target=b.fire, daemon=True).start()
             else:

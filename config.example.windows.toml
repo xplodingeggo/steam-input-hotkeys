@@ -8,3 +8,7 @@
 [keys]
 # F13 = { command = "start \"\" \"C:\Program Files\Some\clip.exe\"", cooldown = 1 }
 # F14 = "powershell -c \"(New-Object -ComObject WScript.Shell).SendKeys('x')\""
+
+# Steam Input taps are 1-3 ms and apps that poll the keyboard (OBS) miss them. `hold` presses the
+# key again for that many ms, for injected keys only:
+# Page_Down = { hold = 100 }

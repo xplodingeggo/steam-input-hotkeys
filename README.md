@@ -75,6 +75,16 @@ python steam-input-hotkeys-win.py              # run the daemon
 Needs Python 3.11+, no packages. Config is `%APPDATA%\steam-input-hotkeys\config.toml`, same format
 as above (see `config.example.windows.toml`); commands run through `cmd.exe`. Restart to reload.
 Key names are the same style as Linux (`F14`, `Page_Down`, `Volume_Up`, `Media_Play_Pause`, ...).
+**Short taps.** Steam Input taps a key for 1-3 ms. Apps that poll the keyboard (OBS hotkeys, some
+games) miss that. `hold` makes the daemon press the same key again for that many milliseconds,
+and only for injected keys, so a real keyboard is left alone:
+
+```toml
+[keys]
+Page_Down = { hold = 100 }                  # OBS "Save Replay" on PageDown
+F13 = { hold = 100, command = "..." }       # hold and run a command
+```
+
 Run it as administrator if the game runs elevated, or Windows hides the keys from the hook.
 
 ## Choosing keys
